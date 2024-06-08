@@ -1,0 +1,9 @@
+.vs/
+Debug/
+CMakeFiles/
+CmakeCache.txt
+*.sln
+*.filters
+*.vcxproj
+*.cmake
+*.user
