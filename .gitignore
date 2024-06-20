@@ -1,0 +1,12 @@
+.vs/
+Debug/
+Release/
+RelWithDebInfo/
+MinSizeRel/
+CMakeFiles/
+CmakeCache.txt
+*.sln
+*.filters
+*.vcxproj
+*.cmake
+*.user
