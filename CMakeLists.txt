@@ -30,6 +30,7 @@ add_library(d3d12 SHARED
 
 # --- Hook DLL (injected via Detours, hooks the real d3d12.dll in-process) ---
 add_library(d3d12_webgpu_hook SHARED
+    src/dll_injection.cpp
     src/d3d12_webgpu_hook.cpp
 )
 # Only link Detours statically. D3D12/DXGI are resolved at runtime via GetProcAddress
@@ -41,5 +42,6 @@ set_property(TARGET detours PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONF
 
 # --- Launcher exe (spawns Chrome suspended, injects hook DLL via CreateRemoteThread) ---
 add_executable(webgpu_profiling_launcher
+    src/dll_injection.cpp
     src/launcher.cpp
 )

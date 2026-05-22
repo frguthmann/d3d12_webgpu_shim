@@ -1,3 +1,5 @@
+#include "dll_injection.h"
+
 #include <Windows.h>
 #include <stdio.h>
 #include <string>
@@ -49,62 +51,6 @@ static std::string GetHookDllPath()
         dir = dir.substr(0, lastSlash + 1);
 
     return dir + "d3d12_webgpu_hook.dll";
-}
-
-static bool InjectDll(HANDLE hProcess, const char* dllPath)
-{
-    SIZE_T pathLen = strlen(dllPath) + 1;
-
-    // Allocate memory in target process for the DLL path
-    LPVOID remoteMem = VirtualAllocEx(hProcess, NULL, pathLen, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
-    if (!remoteMem)
-    {
-        fprintf(stderr, "ERROR: VirtualAllocEx failed (%lu)\n", GetLastError());
-        return false;
-    }
-
-    // Write DLL path into target process
-    if (!WriteProcessMemory(hProcess, remoteMem, dllPath, pathLen, NULL))
-    {
-        fprintf(stderr, "ERROR: WriteProcessMemory failed (%lu)\n", GetLastError());
-        VirtualFreeEx(hProcess, remoteMem, 0, MEM_RELEASE);
-        return false;
-    }
-
-    // Get LoadLibraryA address (same in all processes due to ASLR base sharing for system DLLs)
-    FARPROC loadLibAddr = GetProcAddress(GetModuleHandleA("kernel32.dll"), "LoadLibraryA");
-    if (!loadLibAddr)
-    {
-        fprintf(stderr, "ERROR: Could not find LoadLibraryA\n");
-        VirtualFreeEx(hProcess, remoteMem, 0, MEM_RELEASE);
-        return false;
-    }
-
-    // Create remote thread in the target process to call LoadLibraryA(dllPath)
-    HANDLE hThread = CreateRemoteThread(hProcess, NULL, 0,
-        (LPTHREAD_START_ROUTINE)loadLibAddr, remoteMem, 0, NULL);
-    if (!hThread)
-    {
-        fprintf(stderr, "ERROR: CreateRemoteThread failed (%lu)\n", GetLastError());
-        VirtualFreeEx(hProcess, remoteMem, 0, MEM_RELEASE);
-        return false;
-    }
-
-    // Wait for LoadLibrary to complete (our DllMain installs the hooks)
-    WaitForSingleObject(hThread, 10000);
-
-    DWORD exitCode = 0;
-    GetExitCodeThread(hThread, &exitCode);
-    CloseHandle(hThread);
-    VirtualFreeEx(hProcess, remoteMem, 0, MEM_RELEASE);
-
-    if (exitCode == 0)
-    {
-        fprintf(stderr, "ERROR: LoadLibrary returned NULL in target process. DLL injection failed.\n");
-        return false;
-    }
-
-    return true;
 }
 
 int main(int argc, char* argv[])
@@ -183,7 +129,7 @@ int main(int argc, char* argv[])
     printf("Chrome process created suspended (PID %lu). Injecting hook...\n", pi.dwProcessId);
 
     // Inject our hook DLL
-    if (!InjectDll(pi.hProcess, hookDll.c_str()))
+    if (!InjectDllIntoProcess(pi.hProcess, hookDll.c_str(), true))
     {
         fprintf(stderr, "Injection failed. Terminating Chrome process.\n");
         TerminateProcess(pi.hProcess, 1);
