@@ -1,0 +1,206 @@
+#include <Windows.h>
+#include <stdio.h>
+#include <string>
+
+// Usage: webgpu_profiling_launcher.exe [chrome.exe path] [additional chrome args...]
+// If no path given, tries to find Chrome in the default install location.
+//
+// Injection method: CreateRemoteThread + LoadLibrary
+// 1. Create Chrome process SUSPENDED
+// 2. Inject hook DLL via remote thread calling LoadLibraryA
+// 3. Resume Chrome's main thread
+// This avoids PE header modifications that trigger integrity checks.
+
+static std::string FindChrome()
+{
+    // Try common Chrome locations
+    const char* candidates[] = {
+        "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
+        "C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe",
+    };
+
+    // Also check LOCALAPPDATA for per-user installs
+    char localAppData[MAX_PATH];
+    if (GetEnvironmentVariableA("LOCALAPPDATA", localAppData, MAX_PATH))
+    {
+        static char userChrome[MAX_PATH];
+        snprintf(userChrome, MAX_PATH, "%s\\Google\\Chrome\\Application\\chrome.exe", localAppData);
+        if (GetFileAttributesA(userChrome) != INVALID_FILE_ATTRIBUTES)
+            return userChrome;
+    }
+
+    for (const char* path : candidates)
+    {
+        if (GetFileAttributesA(path) != INVALID_FILE_ATTRIBUTES)
+            return path;
+    }
+
+    return "";
+}
+
+static std::string GetHookDllPath()
+{
+    char modulePath[MAX_PATH];
+    GetModuleFileNameA(NULL, modulePath, MAX_PATH);
+
+    std::string dir(modulePath);
+    size_t lastSlash = dir.find_last_of("\\/");
+    if (lastSlash != std::string::npos)
+        dir = dir.substr(0, lastSlash + 1);
+
+    return dir + "d3d12_webgpu_hook.dll";
+}
+
+static bool InjectDll(HANDLE hProcess, const char* dllPath)
+{
+    SIZE_T pathLen = strlen(dllPath) + 1;
+
+    // Allocate memory in target process for the DLL path
+    LPVOID remoteMem = VirtualAllocEx(hProcess, NULL, pathLen, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+    if (!remoteMem)
+    {
+        fprintf(stderr, "ERROR: VirtualAllocEx failed (%lu)\n", GetLastError());
+        return false;
+    }
+
+    // Write DLL path into target process
+    if (!WriteProcessMemory(hProcess, remoteMem, dllPath, pathLen, NULL))
+    {
+        fprintf(stderr, "ERROR: WriteProcessMemory failed (%lu)\n", GetLastError());
+        VirtualFreeEx(hProcess, remoteMem, 0, MEM_RELEASE);
+        return false;
+    }
+
+    // Get LoadLibraryA address (same in all processes due to ASLR base sharing for system DLLs)
+    FARPROC loadLibAddr = GetProcAddress(GetModuleHandleA("kernel32.dll"), "LoadLibraryA");
+    if (!loadLibAddr)
+    {
+        fprintf(stderr, "ERROR: Could not find LoadLibraryA\n");
+        VirtualFreeEx(hProcess, remoteMem, 0, MEM_RELEASE);
+        return false;
+    }
+
+    // Create remote thread in the target process to call LoadLibraryA(dllPath)
+    HANDLE hThread = CreateRemoteThread(hProcess, NULL, 0,
+        (LPTHREAD_START_ROUTINE)loadLibAddr, remoteMem, 0, NULL);
+    if (!hThread)
+    {
+        fprintf(stderr, "ERROR: CreateRemoteThread failed (%lu)\n", GetLastError());
+        VirtualFreeEx(hProcess, remoteMem, 0, MEM_RELEASE);
+        return false;
+    }
+
+    // Wait for LoadLibrary to complete (our DllMain installs the hooks)
+    WaitForSingleObject(hThread, 10000);
+
+    DWORD exitCode = 0;
+    GetExitCodeThread(hThread, &exitCode);
+    CloseHandle(hThread);
+    VirtualFreeEx(hProcess, remoteMem, 0, MEM_RELEASE);
+
+    if (exitCode == 0)
+    {
+        fprintf(stderr, "ERROR: LoadLibrary returned NULL in target process. DLL injection failed.\n");
+        return false;
+    }
+
+    return true;
+}
+
+int main(int argc, char* argv[])
+{
+    std::string chromePath;
+    std::string extraArgs;
+
+    if (argc >= 2)
+    {
+        chromePath = argv[1];
+        for (int i = 2; i < argc; i++)
+        {
+            extraArgs += " ";
+            extraArgs += argv[i];
+        }
+    }
+    else
+    {
+        chromePath = FindChrome();
+        if (chromePath.empty())
+        {
+            fprintf(stderr, "ERROR: Could not find chrome.exe. Pass the path as the first argument.\n");
+            return 1;
+        }
+    }
+
+    // Verify chrome exists
+    if (GetFileAttributesA(chromePath.c_str()) == INVALID_FILE_ATTRIBUTES)
+    {
+        fprintf(stderr, "ERROR: Chrome not found at: %s\n", chromePath.c_str());
+        return 1;
+    }
+
+    // Find our hook DLL
+    std::string hookDll = GetHookDllPath();
+    if (GetFileAttributesA(hookDll.c_str()) == INVALID_FILE_ATTRIBUTES)
+    {
+        fprintf(stderr, "ERROR: Hook DLL not found at: %s\n", hookDll.c_str());
+        return 1;
+    }
+
+    // Build command line with recommended flags for WebGPU profiling
+    std::string cmdLine = "\"" + chromePath + "\""
+        " --no-sandbox"
+        " --disable-gpu-sandbox"
+        " --disable-gpu-watchdog"
+        " --disable-direct-composition"
+        " --enable-dawn-features=emit_hlsl_debug_symbols,disable_symbol_renaming"
+        + extraArgs;
+
+    printf("Launching Chrome with WebGPU profiling hook...\n");
+    printf("  Chrome: %s\n", chromePath.c_str());
+    printf("  Hook:   %s\n", hookDll.c_str());
+    printf("  Args:   %s\n\n", cmdLine.c_str());
+
+    // Create Chrome process SUSPENDED so we can inject before it runs
+    STARTUPINFOA si = {};
+    si.cb = sizeof(si);
+    PROCESS_INFORMATION pi = {};
+
+    BOOL created = CreateProcessA(
+        chromePath.c_str(),
+        (LPSTR)cmdLine.c_str(),
+        NULL, NULL,
+        FALSE,
+        CREATE_SUSPENDED,
+        NULL, NULL,
+        &si, &pi);
+
+    if (!created)
+    {
+        fprintf(stderr, "ERROR: CreateProcess failed (%lu)\n", GetLastError());
+        return 1;
+    }
+
+    printf("Chrome process created suspended (PID %lu). Injecting hook...\n", pi.dwProcessId);
+
+    // Inject our hook DLL
+    if (!InjectDll(pi.hProcess, hookDll.c_str()))
+    {
+        fprintf(stderr, "Injection failed. Terminating Chrome process.\n");
+        TerminateProcess(pi.hProcess, 1);
+        CloseHandle(pi.hThread);
+        CloseHandle(pi.hProcess);
+        return 1;
+    }
+
+    printf("Hook DLL injected. Resuming Chrome...\n");
+
+    // Resume Chrome's main thread - it will now run with our hooks active
+    ResumeThread(pi.hThread);
+
+    printf("Chrome running (PID %lu). You can now use your GPU profiler.\n", pi.dwProcessId);
+
+    CloseHandle(pi.hThread);
+    CloseHandle(pi.hProcess);
+
+    return 0;
+}
