@@ -13,33 +13,6 @@
 // 3. Resume Chrome's main thread
 // This avoids PE header modifications that trigger integrity checks.
 
-static std::string FindChrome()
-{
-    // Try common Chrome locations
-    const char* candidates[] = {
-        "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
-        "C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe",
-    };
-
-    // Also check LOCALAPPDATA for per-user installs
-    char localAppData[MAX_PATH];
-    if (GetEnvironmentVariableA("LOCALAPPDATA", localAppData, MAX_PATH))
-    {
-        static char userChrome[MAX_PATH];
-        snprintf(userChrome, MAX_PATH, "%s\\Google\\Chrome\\Application\\chrome.exe", localAppData);
-        if (GetFileAttributesA(userChrome) != INVALID_FILE_ATTRIBUTES)
-            return userChrome;
-    }
-
-    for (const char* path : candidates)
-    {
-        if (GetFileAttributesA(path) != INVALID_FILE_ATTRIBUTES)
-            return path;
-    }
-
-    return "";
-}
-
 static std::string GetHookDllPath()
 {
     char modulePath[MAX_PATH];
@@ -69,12 +42,8 @@ int main(int argc, char* argv[])
     }
     else
     {
-        chromePath = FindChrome();
-        if (chromePath.empty())
-        {
-            fprintf(stderr, "ERROR: Could not find chrome.exe. Pass the path as the first argument.\n");
-            return 1;
-        }
+        fprintf(stderr, "ERROR: Could not find chrome.exe. Pass the path as the first argument.\n");
+        return 1;
     }
 
     // Verify chrome exists
@@ -93,13 +62,7 @@ int main(int argc, char* argv[])
     }
 
     // Build command line with recommended flags for WebGPU profiling
-    std::string cmdLine = "\"" + chromePath + "\""
-        " --no-sandbox"
-        " --disable-gpu-sandbox"
-        " --disable-gpu-watchdog"
-        " --disable-direct-composition"
-        " --enable-dawn-features=emit_hlsl_debug_symbols,disable_symbol_renaming"
-        + extraArgs;
+    std::string cmdLine = "\"" + chromePath + "\"" + extraArgs;
 
     printf("Launching Chrome with WebGPU profiling hook...\n");
     printf("  Chrome: %s\n", chromePath.c_str());
