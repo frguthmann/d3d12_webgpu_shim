@@ -10,3 +10,5 @@ CmakeCache.txt
 *.vcxproj
 *.cmake
 *.user
+build/
+.vscode
