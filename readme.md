@@ -4,7 +4,7 @@ This repository makes GPU profilers usable for inspecting WebGPU workloads runni
 
 ## Disclaimer
 
-> ⚠ **Before anything else, please remember that this is a hacky solution and that you should not browse the open web with these tools attached. They should only be used for a GPU profiling session and removed / stopped afterwards. They also conflict with PIX, so you should remove the DLL or close the launcher before attempting to take a capture. I would recommend adding the DLL to a specific flavor of Chrome ( Dev, Canary, etc. ) that you would only use for GPU profiling.**
+> ⚠ **Before anything else, please remember that this is a hacky solution and that you should not browse the open web with these tools attached. They should only be used for a GPU profiling session.**
 
 <a name="HOW_TO_USE"></a>
 
