@@ -45,3 +45,13 @@ add_executable(webgpu_profiling_launcher
     src/dll_injection.cpp
     src/launcher.cpp
 )
+
+# --- Injector exe (attaches hook DLL to an already-running process by PID or name) ---
+add_executable(webgpu_injector
+    src/dll_injection.cpp
+    src/injector.cpp
+)
+# Request administrator elevation via UAC when the exe is launched
+target_link_options(webgpu_injector PRIVATE
+    "/MANIFESTUAC:level='requireAdministrator' uiAccess='false'"
+)

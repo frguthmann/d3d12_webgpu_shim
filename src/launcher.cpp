@@ -4,27 +4,12 @@
 #include <stdio.h>
 #include <string>
 
-// Usage: webgpu_profiling_launcher.exe [chrome.exe path] [additional chrome args...]
-// If no path given, tries to find Chrome in the default install location.
+// Usage: webgpu_profiling_launcher.exe <chrome.exe path> [additional chrome args...]
 //
 // Injection method: CreateRemoteThread + LoadLibrary
 // 1. Create Chrome process SUSPENDED
 // 2. Inject hook DLL via remote thread calling LoadLibraryA
 // 3. Resume Chrome's main thread
-// This avoids PE header modifications that trigger integrity checks.
-
-static std::string GetHookDllPath()
-{
-    char modulePath[MAX_PATH];
-    GetModuleFileNameA(NULL, modulePath, MAX_PATH);
-
-    std::string dir(modulePath);
-    size_t lastSlash = dir.find_last_of("\\/");
-    if (lastSlash != std::string::npos)
-        dir = dir.substr(0, lastSlash + 1);
-
-    return dir + "d3d12_webgpu_hook.dll";
-}
 
 int main(int argc, char* argv[])
 {

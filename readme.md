@@ -10,13 +10,14 @@ This repository makes GPU profilers usable for inspecting WebGPU workloads runni
 
 ## How it works
 
-The repository builds three artifacts:
+The repository builds four artifacts:
 
 | Artifact | Description |
 |---|---|
 | `d3d12.dll` | Legacy shim DLL. Placed next to `chrome.exe`, it intercepts D3D12 calls before Chrome can load the real `d3d12.dll`. |
 | `d3d12_webgpu_hook.dll` | Hook DLL that uses [Microsoft Detours](https://github.com/microsoft/Detours) to patch D3D12 entry points in-process at runtime. This avoids touching Chrome's install directory. |
 | `webgpu_profiling_launcher.exe` | Launcher that creates Chrome suspended, injects `d3d12_webgpu_hook.dll` via `CreateRemoteThread` + `LoadLibrary`, then resumes the process. |
+| `webgpu_injector.exe` | Standalone injector that attaches `d3d12_webgpu_hook.dll` to an already-running process by PID or process name. Use this when your profiler (e.g. Nsight) needs to be the one launching Chrome. |
 
 The launcher approach is now the default one as Chrome has hardened its DLL loading policies and prevents loading our custom `d3d12.dll` by default.
 
@@ -30,18 +31,36 @@ A comprehensive explanation on how to use these tools is provided in the followi
 2. On AMD, download `WinPixEventRuntime.dll` from the release section of <a href="https://github.com/frguthmann/PixEventsAMD" target="_blank" rel="noopener noreferrer">that repository</a> and place it in the `<Chrome Dir>\<Version Number>` folder.
 3. Run the launcher, passing the path to `chrome.exe` and any extra Chrome flags. Ex with recommended flags:
     ```
-    webgpu_profiling_launcher.exe [path\to\chrome.exe] --no-sandbox --disable-gpu-sandbox --disable-gpu-watchdog --disable-direct-composition --enable-dawn-features=emit_hlsl_debug_symbols,disable_symbol_renaming
+    webgpu_profiling_launcher.exe [path\to\chrome.exe] --no-sandbox --disable-gpu-sandbox --disable-gpu-watchdog --disable-direct-composition --do-not-de-elevate --enable-dawn-features=emit_hlsl_debug_symbols,disable_symbol_renaming
     ```
 4. The launcher will start Chrome with the hook already active. Use your favourite GPU profiler as usual.
 
-### Option B (DEPRECATED) — Legacy shim DLL
+### Option B — Injector (for profilers that control the launch, e.g. Nsight)
+
+Some GPU profilers such as NVIDIA Nsight need to launch the target process themselves in order to instrument it. In that case, use `webgpu_injector.exe` to attach the hook DLL after Chrome is already running.
+
+1. Build the project or download the artifacts from the releases page.
+2. On AMD, place `WinPixEventRuntime.dll` in the `<Chrome Dir>\<Version Number>` folder (see Option A step 2).
+3. Launch Chrome through your profiler as usual, passing the recommended flags:
+    ```
+    --no-sandbox --disable-gpu-sandbox --disable-gpu-watchdog --disable-direct-composition --do-not-de-elevate --enable-dawn-features=emit_hlsl_debug_symbols,disable_symbol_renaming
+    ```
+4. Once Chrome is running, run the injector, targeting all Chrome processes by name:
+    ```
+    webgpu_injector.exe chrome.exe
+    ```
+    Windows will prompt for elevation automatically (UAC). This injects the hook into every running `chrome.exe` process. In the browser process the hook patches `CreateProcessW` so that any GPU child process Chrome spawns afterwards also receives the DLL automatically. If the GPU process is already running, it is patched directly as well.
+5. Reload the tab with the WebGPU workload.
+6. Use your profiler as usual.
+
+### Option C (DEPRECATED) — Legacy shim DLL
 
 1. Build or download `d3d12.dll` from this repository.
     + Place the DLL into the `\Google\Chrome\Application` folder.
 2. On AMD, download `WinPixEventRuntime.dll` from the release section of <a href="https://github.com/frguthmann/PixEventsAMD" target="_blank" rel="noopener noreferrer">that repository</a>.
     + Place it into the `\Google\Chrome\Application\<Version Number>` folder.
 3. When launching Chrome, use the following command line arguments:
-    + `--no-sandbox --disable-gpu-sandbox --disable-gpu-watchdog --disable-direct-composition --enable-dawn-features=emit_hlsl_debug_symbols,disable_symbol_renaming`
+    + `--no-sandbox --disable-gpu-sandbox --disable-gpu-watchdog --disable-direct-composition --do-not-de-elevate --enable-dawn-features=emit_hlsl_debug_symbols,disable_symbol_renaming`
 4. Use your favorite GPU profiler as usual.
 
 <a name="building"></a>
@@ -59,7 +78,7 @@ cmake -S . -B build
 cmake --build build --config RelWithDebInfo
 ```
 
-The three artifacts are placed in `build\RelWithDebInfo\`. Alternatively, open the generated Visual Studio solution (`build\d3d12_webgpu_shim.sln`) and build from the IDE.
+The four artifacts are placed in `build\RelWithDebInfo\`. Alternatively, open the generated Visual Studio solution (`build\d3d12_webgpu_shim.sln`) and build from the IDE.
 
 Then follow the [How to use](#HOW_TO_USE) instructions.
 
